@@ -48,11 +48,11 @@ DEFAULT_FONT_URL = "https://github.com/notofonts/noto-cjk/raw/main/Sans/Variable
 
 
 @register(
-    "astrbot_plugin_steamwatch",
-    "Chinachani",
+    "astrbot_plugin_steamwatch_rimielab",
+    "RimroseLim",
     "通过astrbot视奸你的steam好友！",
     "1.2.5",
-    "https://github.com/Chinachani/astrbot_plugin_steamwatch",
+    "https://github.com/SirTamago/astrbot_plugin_steamwatch_rimielab",
 )
 class SteamWatchPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

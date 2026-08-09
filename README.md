@@ -1,4 +1,4 @@
-﻿# astrbot_plugin_steamwatch
+﻿# astrbot_plugin_steamwatch_rimielab
 
 监控 SteamID 是否在进行游戏，并推送通知。支持绑定与 @用户查询、分群订阅、代理与连通性测试，以及游戏时长/成就等信息展示。
 
