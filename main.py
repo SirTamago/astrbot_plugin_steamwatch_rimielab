@@ -52,7 +52,7 @@ DEFAULT_FONT_URL = "https://github.com/notofonts/noto-cjk/raw/main/Sans/Variable
     "astrbot_plugin_steamwatch_rimielab",
     "RimroseLim",
     "通过astrbot视奸你的steam好友！",
-    "1.2.5",
+    "1.2.6",
     "https://github.com/SirTamago/astrbot_plugin_steamwatch_rimielab",
 )
 class SteamWatchPlugin(Star):
@@ -1067,7 +1067,7 @@ class SteamWatchPlugin(Star):
     async def _menu_text(self, event: AstrMessageEvent):
         if self._get_menu_style() == 2:
             lines = [
-                "╭─ SteamWatch v1.2.5 ─╮",
+                "╭─ SteamWatch v1.2.6 ─╮",
                 "│ 入口：/sw <模块>     │",
                 "╰────────────────────╯",
                 "",

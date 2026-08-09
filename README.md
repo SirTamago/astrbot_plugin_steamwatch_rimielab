@@ -240,6 +240,15 @@
 - 修复 Steam API HTTP 状态错误、自定义链接解析异常未被友好处理的问题
 - 修复配置了管理员后仍可能自动加入监控、解绑后昵称元数据残留、手改轮询间隔可低于 30 秒的问题
 
+### v1.2.6
+- 新增每日游玩时长排行榜：按监控组记录当天（4 点刷新自然日）累计游玩时长，跨游戏合计并保留每款游戏明细
+- 新增 `/sw rank [group] [num] [days]`：查看指定分组排行，支持指定名次数量与最近 7/30 天聚合
+- 跨天切分：会话跨 4 点边界或切换游戏时自动按段落账（分割段带标记），不影响"本次游玩"消息的完整时长；切换游戏时为刚结束的游戏推送结束消息
+- 持久化改为 SQLite（`data/steamwatch_data.db`），旧 JSON 数据自动迁移；`leaderboard_keep_days` 默认 30
+- 新增每日定时推送：`daily_rank_push_enabled` 在 `daily_rank_push_time`（默认 04:00）推送昨日各分组排行前 `daily_rank_push_num` 名
+- 新配置：`daily_leaderboard_enabled` / `leaderboard_keep_days` / `data_file_path` / `daily_rank_push_enabled` / `daily_rank_push_time` / `daily_rank_push_num`
+- 停止游戏评价逻辑已注释（保留 `_playtime_taunt` 便于恢复）
+
 ### v1.2.5
 - 新增内置菜单风格 2（卡片分区样式），保留经典菜单风格 1
 - 新增 `/sw style [1|2]` 与 `/steamwatch_menustyle [1|2]` 用于查看或切换菜单风格
