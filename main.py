@@ -1,7 +1,9 @@
 import asyncio
 import contextlib
 import hashlib
-from datetime import datetime
+from datetime import datetime, timedelta
+import json
+import os
 import tempfile
 from pathlib import Path
 import re
@@ -61,8 +63,11 @@ class SteamWatchPlugin(Star):
         self._task = asyncio.create_task(self._poll_loop())
         self._last_state: Dict[str, Tuple[bool, Optional[str], Optional[str]]] = {}
         self._session_start: Dict[str, float] = {}
+        self._playtime_data: Dict = self._load_playtime_data()
+        self._restore_active_sessions()
         self._app_name_cache: Dict[str, Tuple[str, float]] = {}
         self._font_download_task: Optional[asyncio.Task] = None
+        self._rank_push_task = asyncio.create_task(self._rank_push_loop())
 
     # ------------------------
     # Short command入口
@@ -192,6 +197,10 @@ class SteamWatchPlugin(Star):
             return
         if action in {"me"}:
             async for item in self._cmd_me(event):
+                yield item
+            return
+        if action in {"rank", "lb", "leaderboard"}:
+            async for item in self._cmd_rank(event, rest):
                 yield item
             return
 
@@ -334,6 +343,13 @@ class SteamWatchPlugin(Star):
     async def me(self, event: AstrMessageEvent):
         """查看当前用户绑定信息。"""
         async for item in self._cmd_me(event):
+            yield item
+
+    @filter.command("steamwatch_rank")
+    async def rank_cmd(self, event: AstrMessageEvent, args: str = ""):
+        """查看指定分组当日游玩时长排行（可指定数量）。"""
+        parts = args.split() if args else []
+        async for item in self._cmd_rank(event, parts):
             yield item
 
     # ------------------------
@@ -1114,6 +1130,7 @@ class SteamWatchPlugin(Star):
                 "  /steamwatch_info <目标>",
                 "  /steamwatch_status <目标>",
                 "  /steamwatch_resolve <目标>",
+                "  /steamwatch_rank [分组] [数量]",
                 "",
                 "绑定",
                 "  /steamwatch_bind <目标>",
@@ -1149,6 +1166,7 @@ class SteamWatchPlugin(Star):
             "/steamwatch_info <steamid64|profile_url|vanity|friend_code|me>",
             "/steamwatch_status <steamid64|profile_url|vanity|friend_code|me>",
             "/steamwatch_resolve <steamid64|profile_url|vanity|friend_code|me>",
+            "/steamwatch_rank [group] [num]",
             "",
             "绑定：",
             "/steamwatch_bind <steamid64|profile_url|vanity|friend_code>",
@@ -1254,6 +1272,9 @@ class SteamWatchPlugin(Star):
                 "/sw resolve <目标>",
                 "  解析为 SteamID64 和好友码",
                 "",
+                "/sw rank [分组] [数量]",
+                "  查看指定分组当日游玩时长排行（默认前 5 名）",
+                "",
                 "目标支持：steamid / profile / vanity / friend_code / me / @用户",
             ])
         return "\n".join([
@@ -1263,6 +1284,7 @@ class SteamWatchPlugin(Star):
             "/sw info  <steamid|profile|vanity|friend_code|me>   详细信息",
             "/sw status <steamid|profile|vanity|friend_code|me>  推送当前状态",
             "/sw resolve <steamid|profile|vanity|friend_code|me> 解析为 SteamID64",
+            "/sw rank [group] [num]                              当日游玩时长排行(默认前5)",
         ])
 
     def _menu_bind(self) -> str:
@@ -1341,6 +1363,10 @@ class SteamWatchPlugin(Star):
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+        if self._rank_push_task and not self._rank_push_task.done():
+            self._rank_push_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._rank_push_task
         if self._font_download_task and not self._font_download_task.done():
             self._font_download_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -1384,11 +1410,18 @@ class SteamWatchPlugin(Star):
                 if steamid not in self._last_state:
                     self._last_state[steamid] = (playing, game_name, str(appid) if appid is not None else None)
                     if playing:
-                        self._session_start[steamid] = time.time()
+                        self._session_start.setdefault(steamid, time.time())
+                        if steamid not in self._playtime_data.get("active_sessions", {}):
+                            self._record_active_session(steamid, display_name, appid)
+                    else:
+                        # 重启前挂起的活动会话已不在游戏中 -> 丢弃，避免把停机空档计入时长
+                        self._session_start.pop(steamid, None)
+                        self._clear_active_session(steamid)
                     continue
                 last_playing, last_game, last_appid = self._last_state[steamid]
                 if playing and not last_playing:
                     self._session_start[steamid] = time.time()
+                    self._record_active_session(steamid, display_name, appid)
                     await self._notify_by_steamid(
                         steamid,
                         f"{player.get('personaname', steamid)} 正在玩 {display_name}！",
@@ -1396,23 +1429,40 @@ class SteamWatchPlugin(Star):
                         avatar_url=str(player.get("avatarfull", "")),
                         is_playing=True,
                     )
-                elif notify_on_stop and last_playing and not playing:
+                elif playing and last_playing and (game_name != last_game):
+                    # 仍处游戏中但切换了游戏，更新活动会话信息（保留开始时间）
+                    active = self._playtime_data.get("active_sessions", {})
+                    if steamid in active:
+                        active[steamid]["game"] = display_name
+                        active[steamid]["appid"] = appid
+                        self._save_playtime_data()
+                elif last_playing and not playing:
                     duration_min = self._consume_session_minutes(steamid)
-                    # 输出评价逻辑已注释（dev 分支测试，后续再恢复）
-                    # taunt = _playtime_taunt(duration_min)
+                    self._clear_active_session(steamid)
                     last_appid_int = _safe_int(last_appid)
                     last_display = await self._get_localized_game_name(last_appid_int, last_game or "某个游戏")
-                    await self._notify_by_steamid(
-                        steamid,
-                        (
-                            f"{player.get('personaname', steamid)} 已停止游戏 {last_display}。"
-                            f"本次游玩 {_format_playtime(duration_min)}。"
-                            # f"评价：{taunt}"
-                        ),
-                        appid=last_appid_int,
-                        avatar_url=str(player.get("avatarfull", "")),
-                        is_playing=False,
-                    )
+                    if bool(self.config.get("daily_leaderboard_enabled", False)) and duration_min > 0:
+                        self._record_daily_playtime(
+                            steamid,
+                            str(player.get("personaname", steamid)),
+                            last_display,
+                            last_appid_int,
+                            duration_min,
+                        )
+                    if notify_on_stop:
+                        # 输出评价逻辑已注释（dev 分支测试，后续再恢复）
+                        # taunt = _playtime_taunt(duration_min)
+                        await self._notify_by_steamid(
+                            steamid,
+                            (
+                                f"{player.get('personaname', steamid)} 已停止游戏 {last_display}。"
+                                f"本次游玩 {_format_playtime(duration_min)}。"
+                                # f"评价：{taunt}"
+                            ),
+                            appid=last_appid_int,
+                            avatar_url=str(player.get("avatarfull", "")),
+                            is_playing=False,
+                        )
                 self._last_state[steamid] = (playing, game_name, str(appid) if appid is not None else None)
             except Exception:
                 logger.exception("steamwatch poll target failed: steamid=%s", steamid)
@@ -2214,6 +2264,211 @@ class SteamWatchPlugin(Star):
         if not start:
             return 0
         return max(1, int((time.time() - start) // 60))
+
+    # ------------------------
+    # Playtime data persistence（每日排行榜 / 进行中会话）
+    # ------------------------
+    def _playtime_data_path(self) -> Path:
+        cfg = str(self.config.get("data_file_path", "")).strip()
+        if cfg:
+            p = Path(cfg).expanduser()
+            if p.is_absolute():
+                return p
+            return Path(__file__).resolve().parent / p
+        return Path(__file__).resolve().parent / "data" / "steamwatch_data.json"
+
+    def _load_playtime_data(self) -> Dict:
+        path = self._playtime_data_path()
+        data: Dict = {"version": 1, "active_sessions": {}, "daily_playtime_data": {}}
+        try:
+            if path.exists():
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = raw
+        except Exception:
+            logger.exception("steamwatch load playtime data failed, use empty: %s", path)
+        data.setdefault("active_sessions", {})
+        data.setdefault("daily_playtime_data", {})
+        self._prune_daily_playtime(data)
+        return data
+
+    def _save_playtime_data(self) -> None:
+        path = self._playtime_data_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            tmp.write_text(
+                json.dumps(self._playtime_data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+        except Exception:
+            logger.exception("steamwatch save playtime data failed: %s", path)
+
+    def _prune_daily_playtime(self, data: Optional[Dict] = None) -> None:
+        data = data if data is not None else self._playtime_data
+        daily = data.get("daily_playtime_data", {})
+        if not daily:
+            return
+        keep_days = max(1, int(self.config.get("leaderboard_keep_days", 7) or 7))
+        cutoff = (datetime.now() - timedelta(days=keep_days)).strftime("%Y-%m-%d")
+        for date in [d for d in daily if d < cutoff]:
+            daily.pop(date, None)
+
+    def _record_active_session(self, steamid: str, game: str, appid: Optional[int]) -> None:
+        active = self._playtime_data.setdefault("active_sessions", {})
+        active[steamid] = {"ts": time.time(), "game": game, "appid": appid}
+        self._save_playtime_data()
+
+    def _clear_active_session(self, steamid: str) -> None:
+        active = self._playtime_data.get("active_sessions")
+        if active and steamid in active:
+            active.pop(steamid, None)
+            self._save_playtime_data()
+
+    def _restore_active_sessions(self) -> None:
+        active = self._playtime_data.get("active_sessions", {})
+        for sid, info in active.items():
+            if isinstance(info, dict):
+                self._session_start[sid] = float(info.get("ts") or time.time())
+
+    def _record_daily_playtime(
+        self,
+        steamid: str,
+        name: str,
+        game: str,
+        appid: Optional[int],
+        minutes: int,
+    ) -> None:
+        if minutes <= 0:
+            return
+        groups = self._get_steamid_groups().get(steamid, [])
+        if not groups:
+            return
+        today = time.strftime("%Y-%m-%d")
+        daily = self._playtime_data.setdefault("daily_playtime_data", {})
+        day = daily.setdefault(today, {})
+        for group in groups:
+            players = day.setdefault(group, {})
+            entry = players.setdefault(steamid, {"name": name, "minutes": 0, "games": {}})
+            if not entry.get("name"):
+                entry["name"] = name
+            entry["minutes"] = int(entry.get("minutes", 0)) + minutes
+            games = entry.setdefault("games", {})
+            game_key = game or "未知游戏"
+            games[game_key] = int(games.get(game_key, 0)) + minutes
+        self._save_playtime_data()
+
+    def _build_rank_text(self, group: str, date: Optional[str] = None, num: Optional[int] = None) -> str:
+        date = date or time.strftime("%Y-%m-%d")
+        today = time.strftime("%Y-%m-%d")
+        label = "今日" if date == today else date
+        daily = self._playtime_data.get("daily_playtime_data", {})
+        players = daily.get(date, {}).get(group, {})
+        lines = [f"【{group} · {label}游玩排行】"]
+        if not players:
+            lines.append("当天还没有记录。")
+            return "\n".join(lines)
+        ranked = sorted(
+            players.values(),
+            key=lambda p: int(p.get("minutes", 0)),
+            reverse=True,
+        )
+        total_count = len(ranked)
+        if num and num > 0:
+            ranked = ranked[:num]
+        for idx, entry in enumerate(ranked, start=1):
+            name = entry.get("name") or "未知玩家"
+            total = int(entry.get("minutes", 0))
+            games = entry.get("games") or {}
+            detail = "、".join(
+                f"{g} {_format_playtime(m)}"
+                for g, m in sorted(games.items(), key=lambda x: -x[1])
+            )
+            if detail:
+                lines.append(f"{idx}. {name} — {_format_playtime(total)}（{detail}）")
+            else:
+                lines.append(f"{idx}. {name} — {_format_playtime(total)}")
+        if num and num > 0 and total_count > num:
+            lines.append(f"（共 {total_count} 名，仅显示前 {num} 名）")
+        return "\n".join(lines)
+
+    async def _cmd_rank(self, event: AstrMessageEvent, args: List[str]):
+        if not bool(self.config.get("daily_leaderboard_enabled", False)):
+            yield event.plain_result(
+                "未开启每日排行榜功能。可在插件配置中打开 daily_leaderboard_enabled 后使用。"
+            )
+            return
+        group = args[0].strip() if args else ""
+        num: Optional[int] = None
+        if len(args) >= 2:
+            try:
+                num = int(args[1])
+            except ValueError:
+                yield event.plain_result("排名数量参数无效，应为正整数。用法：/sw rank [分组] [数量]")
+                return
+            if num < 1:
+                yield event.plain_result("排名数量至少为 1。用法：/sw rank [分组] [数量]")
+                return
+        if not group and self._group_enabled():
+            group = self._get_current_sub_group(event)
+        if not group:
+            today = time.strftime("%Y-%m-%d")
+            day = self._playtime_data.get("daily_playtime_data", {}).get(today, {})
+            if not day:
+                yield event.plain_result("今日还没有任何记录。用法：/sw rank <分组名> [数量]")
+                return
+            hint = "、".join(sorted(day.keys()))
+            yield event.plain_result(f"请指定分组：/sw rank <分组名> [数量]。今日已有数据的分组：{hint}")
+            return
+        if num is None:
+            num = 5
+        text = self._build_rank_text(group, num=num)
+        yield await self._build_event_result(event, text)
+
+    # ------------------------
+    # Daily rank push（每日定时推送昨日排行）
+    # ------------------------
+    async def _rank_push_loop(self):
+        while not self._stop_event.is_set():
+            try:
+                await self._maybe_push_daily_rank()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("steamwatch rank push loop error")
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=60)
+            except asyncio.TimeoutError:
+                continue
+
+    async def _maybe_push_daily_rank(self, now: Optional[datetime] = None) -> None:
+        if not bool(self.config.get("daily_rank_push_enabled", False)):
+            return
+        if not bool(self.config.get("daily_leaderboard_enabled", False)):
+            return
+        now = now or datetime.now()
+        current = now.strftime("%H:%M")
+        push_time = str(self.config.get("daily_rank_push_time", "04:00")).strip() or "04:00"
+        if current != push_time:
+            return
+        today = now.strftime("%Y-%m-%d")
+        if self._playtime_data.get("last_rank_push_date") == today:
+            return
+        groups = self._get_notify_groups()
+        if not groups:
+            return
+        yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        num = max(1, int(self.config.get("daily_rank_push_num", 5) or 5))
+        daily = self._playtime_data.get("daily_playtime_data", {})
+        for group in groups:
+            targets = groups[group]
+            if not daily.get(yesterday, {}).get(group):
+                continue
+            text = self._build_rank_text(group, date=yesterday, num=num)
+            await self._notify_to_targets(text, targets)
+        self._playtime_data["last_rank_push_date"] = today
+        self._save_playtime_data()
 
     # ------------------------
     # Helpers: resolve/HTTP

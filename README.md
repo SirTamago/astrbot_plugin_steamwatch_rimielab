@@ -23,6 +23,12 @@
 - `notify_groups`：分群订阅（格式 group:target）
 - `steamid_groups`：SteamID 分组（格式 steamid:group；同一 SteamID 可配置多条以加入多个分组）
 - `notify_on_stop`：是否在停止游戏时提醒
+- `daily_leaderboard_enabled`：是否开启每日游玩时长排行榜（按监控组记录，支持 `/sw rank` 查询）
+- `leaderboard_keep_days`：每日游玩数据保留天数（自动清理更早记录）
+- `data_file_path`：游玩数据文件路径（留空使用插件目录 `data/steamwatch_data.json`，可填绝对路径或相对插件目录的路径）
+- `daily_rank_push_enabled`：是否每天定时推送昨日游玩排行（需同时开启 `daily_leaderboard_enabled`）
+- `daily_rank_push_time`：每日排行推送时间（HH:MM，24 小时制，默认 04:00）
+- `daily_rank_push_num`：每日排行推送的名次数量（默认 5）
 - `request_timeout_sec`：请求超时（秒）
 - `request_retries`：请求重试次数
 - `request_retry_delay_sec`：重试间隔（秒）
@@ -62,7 +68,7 @@
 - `/sw subinfo` 查看当前会话订阅信息
 - `/sw groupinfo [group]` 查看分组订阅详情
 - `/sw grouplist` 查看分组订阅列表
-- `/sw resolve|query|status|info`
+- `/sw resolve|query|status|info|rank`
 - `/sw test|proxytest|font|preset`
 - `/sw style [1|2]` 查看或切换菜单风格（管理员）
 - `/sw bind|unbind|me`
@@ -83,6 +89,17 @@
 - `/sw grouplist` 查看分组订阅列表
 - `/sw subclean` 清理无效订阅（管理员）
 说明：启用分群订阅后，仅推送已分组目标，不再回退到全局订阅。轮询使用统一监控号池，账号状态变化后会查找该账号所属的所有分组，并向这些分组的订阅会话去重推送。
+
+### 每日游玩排行榜
+开启配置 `daily_leaderboard_enabled` 后，插件会按监控组记录每个账号当天（按自然日）的累计游玩时长（跨游戏合计，并保留每款游戏的时长拆分），数据持久化保存到 `data_file_path` 指定的 JSON 文件（默认插件目录 `data/steamwatch_data.json`），重启不丢失：
+
+- `/sw rank [group] [num]` 查看指定监控组当日游玩时长排行（默认前 5 名）；不带 group 时尝试取当前会话的订阅分组
+- 排行按总时长降序，每行展示玩家昵称、总时长与各游戏明细
+- 记录在"停止游戏"时落账；正在进行的会话也会持久化，重启后继续累计（若重启后该账号已离线则丢弃挂起会话）
+- `leaderboard_keep_days` 控制历史数据保留天数，超期的日期自动清理
+- 开关关闭时不记录每日数据，`/sw rank` 会提示未开启
+
+每日定时推送：开启 `daily_rank_push_enabled` 后，每天在 `daily_rank_push_time`（默认 04:00）把**昨日**各分组的游玩时长前 `daily_rank_push_num` 名推送到对应分组的订阅会话；每个自然日只推送一次，无记录的分组跳过。
 
 ### 完整菜单示例（模块化）
 ```
@@ -121,6 +138,7 @@
 - `/steamwatch_preset` 一键应用推荐图片配置（管理员）
 - `/steamwatch_menustyle [1|2]` 查看或切换菜单风格（管理员）
 - `/steamwatch_status <steamid64|profile_url|vanity|friend_code|me>` 推送当前状态
+- `/steamwatch_rank [group] [num]` 查看指定监控组当日游玩时长排行（需开启 `daily_leaderboard_enabled`）
 - `/steamwatch_bind <steamid64|profile_url|vanity|friend_code>` 绑定自己的 SteamID
 - `/steamwatch_unbind [user_id]` 解除绑定（可选参数仅管理员）
 - `/steamwatch_me` 查看自己的绑定

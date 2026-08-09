@@ -213,5 +213,35 @@
     "type": "bool",
     "description": "玩家停止游戏时是否通知",
     "default": false
+  },
+  "daily_leaderboard_enabled": {
+    "type": "bool",
+    "description": "是否开启每日游玩时长排行榜（按监控组记录并支持 /sw rank 查询）",
+    "default": false
+  },
+  "leaderboard_keep_days": {
+    "type": "int",
+    "description": "每日游玩数据保留天数（自动清理更早的记录）",
+    "default": 7
+  },
+  "data_file_path": {
+    "type": "string",
+    "description": "游玩数据文件路径（留空则使用插件目录 data/steamwatch_data.json；可填绝对路径或相对插件目录的路径）",
+    "default": ""
+  },
+  "daily_rank_push_enabled": {
+    "type": "bool",
+    "description": "是否每天定时推送昨日游玩排行（需同时开启 daily_leaderboard_enabled）",
+    "default": false
+  },
+  "daily_rank_push_time": {
+    "type": "string",
+    "description": "每日排行推送时间（HH:MM，24 小时制）",
+    "default": "04:00"
+  },
+  "daily_rank_push_num": {
+    "type": "int",
+    "description": "每日排行推送的名次数量",
+    "default": 5
   }
 }
