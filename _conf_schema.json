@@ -221,12 +221,12 @@
   },
   "leaderboard_keep_days": {
     "type": "int",
-    "description": "每日游玩数据保留天数（自动清理更早的记录）",
-    "default": 7
+    "description": "游玩数据保留天数（默认 30，支持最近 30 天排行；自动清理更早记录）",
+    "default": 30
   },
   "data_file_path": {
     "type": "string",
-    "description": "游玩数据文件路径（留空则使用插件目录 data/steamwatch_data.json；可填绝对路径或相对插件目录的路径）",
+    "description": "游玩数据文件路径（SQLite，留空则使用插件目录 data/steamwatch_data.db；可填绝对路径或相对插件目录的路径）",
     "default": ""
   },
   "daily_rank_push_enabled": {
