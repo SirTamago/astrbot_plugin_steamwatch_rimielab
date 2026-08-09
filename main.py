@@ -1398,15 +1398,16 @@ class SteamWatchPlugin(Star):
                     )
                 elif notify_on_stop and last_playing and not playing:
                     duration_min = self._consume_session_minutes(steamid)
-                    taunt = _playtime_taunt(duration_min)
+                    # 输出评价逻辑已注释（dev 分支测试，后续再恢复）
+                    # taunt = _playtime_taunt(duration_min)
                     last_appid_int = _safe_int(last_appid)
                     last_display = await self._get_localized_game_name(last_appid_int, last_game or "某个游戏")
                     await self._notify_by_steamid(
                         steamid,
                         (
                             f"{player.get('personaname', steamid)} 已停止游戏 {last_display}。"
-                            f"本次游玩 {duration_min} 分钟。\n"
-                            f"评价：{taunt}"
+                            f"本次游玩 {duration_min} 分钟。"
+                            # f"评价：{taunt}"
                         ),
                         appid=last_appid_int,
                         avatar_url=str(player.get("avatarfull", "")),

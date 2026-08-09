@@ -1,0 +1,10 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+
+# 虚拟环境
+.venv/
+venv/
+
+# 离线测试文件（不纳入版本库）
+tests/
