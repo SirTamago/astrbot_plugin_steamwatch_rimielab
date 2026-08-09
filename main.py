@@ -1406,7 +1406,7 @@ class SteamWatchPlugin(Star):
                         steamid,
                         (
                             f"{player.get('personaname', steamid)} 已停止游戏 {last_display}。"
-                            f"本次游玩 {duration_min} 分钟。"
+                            f"本次游玩 {_format_playtime(duration_min)}。"
                             # f"评价：{taunt}"
                         ),
                         appid=last_appid_int,
@@ -2417,6 +2417,20 @@ def _format_ts(ts: Optional[int]) -> str:
         return datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return ""
+
+
+def _format_playtime(minutes: int) -> str:
+    """将分钟数格式化为可读文案。
+
+    - 不超过 60 分钟（含刚好 60 分钟）用分钟表述：如 "45 分钟"
+    - 超过 60 分钟用 x小时x分钟：如 "1 小时 5 分钟"；整小时省略分钟，如 "2 小时"
+    """
+    if minutes <= 60:
+        return f"{minutes} 分钟"
+    hours, rem = divmod(minutes, 60)
+    if rem == 0:
+        return f"{hours} 小时"
+    return f"{hours} 小时 {rem} 分钟"
 
 
 def _playtime_taunt(minutes: int) -> str:
